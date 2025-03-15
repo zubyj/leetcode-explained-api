@@ -11,19 +11,27 @@ dotenv.config();
 
 const app = express();
 
-// ...existing code...
+// Basic middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Security middleware
+app.use(helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+}));
+
+// CORS configuration
 app.use(cors({
-    // Allow both your production origin and Chrome extension ID
-    origin: [
-        'chrome-extension://hkbmmebmjcgpkfmlpjhghcpbokomngga', // Your extension ID
-        'https://leetcodeapp.com',
-        // Add any other origins you need
-    ],
-    methods: ['POST'],
+    origin: 'chrome-extension://hkbmmebmjcgpkfmlpjhghcpbokomngga',
+    methods: ['POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Origin'],
     credentials: true,
     optionsSuccessStatus: 200
 }));
-// ...existing code...
+
+// Add options handling
+app.options('/api/generate', cors());
 
 app.post(
     '/api/generate',
@@ -73,8 +81,6 @@ app.post(
         }
     }
 );
-
-// ...existing code...
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
