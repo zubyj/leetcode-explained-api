@@ -42,6 +42,22 @@ app.post(
     ],
     async (req, res) => {
         try {
+            // Log headers and relevant request data
+            console.log('Request Headers:', {
+                origin: req.headers.origin,
+                contentType: req.headers['content-type'],
+                userAgent: req.headers['user-agent']
+            });
+
+            // Log request body (excluding prompt for privacy)
+            console.log('Request Body:', {
+                userId: req.body.userId,
+                version: req.body.version,
+                problemTitle: req.body.problemTitle,
+                action: req.body.action,
+                model: req.body.model
+            });
+
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
                 return res.status(400).json({ errors: errors.array() });
