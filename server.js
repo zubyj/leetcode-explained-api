@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const axios = require('axios');
+const logger = require('./utils/logger');
 
 // Load environment variables
 dotenv.config();
@@ -33,6 +34,9 @@ app.use(cors({
 // Add options handling
 app.options('/api/generate', cors());
 
+// Add pino-http middleware before routes
+app.use(logger);
+
 app.post(
     '/api/generate',
     [
@@ -42,24 +46,18 @@ app.post(
     ],
     async (req, res) => {
         try {
-            // Log headers and relevant request data
-            console.log('Request Headers:', {
-                origin: req.headers.origin,
-                contentType: req.headers['content-type'],
-                userAgent: req.headers['user-agent']
-            });
-
-            // Log request body (excluding prompt for privacy)
-            console.log('Request Body:', {
+            // pino-http adds logging methods to req object
+            req.log.info({
                 userId: req.body.userId,
                 version: req.body.version,
                 problemTitle: req.body.problemTitle,
                 action: req.body.action,
                 model: req.body.model
-            });
+            }, 'Processing request');
 
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
+                req.log.warn({ errors: errors.array() }, 'Validation failed');
                 return res.status(400).json({ errors: errors.array() });
             }
 
@@ -89,7 +87,11 @@ app.post(
             });
 
         } catch (error) {
-            console.error('Server error:', error.response?.data || error.message);
+            req.log.error({
+                err: error,
+                response: error.response?.data
+            }, 'Server error occurred');
+
             res.status(500).json({
                 error: 'Server error',
                 message: error.response?.data?.error || error.message
@@ -100,5 +102,5 @@ app.post(
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    logger.info(`Server is running on port ${PORT}`);
 });
