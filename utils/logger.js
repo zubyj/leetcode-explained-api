@@ -1,5 +1,6 @@
 // utils/logger.js
 const pino = require('pino');
+const crypto = require('crypto');
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -24,7 +25,7 @@ const logger = pino({
 
 const httpLogger = require('pino-http')({
     logger,
-    genReqId: (req) => req.id || req.headers['x-request-id'] || pino.randomUUID(),
+    genReqId: (req) => req.id || req.headers['x-request-id'] || crypto.randomUUID(),
     customLogLevel: (req, res, err) => {
         if (res.statusCode >= 500 || err) return 'error';
         else if (res.statusCode >= 400) return 'warn';
