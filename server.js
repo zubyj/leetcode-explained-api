@@ -5,7 +5,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const axios = require('axios');
-const logger = require('./utils/logger');
+const { logger, httpLogger } = require('./utils/logger');
 
 // Load environment variables
 dotenv.config();
@@ -34,8 +34,8 @@ app.use(cors({
 // Add options handling
 app.options('/api/generate', cors());
 
-// Add pino-http middleware before routes
-app.use(logger);
+// Add pino-http middleware
+app.use(httpLogger);
 
 app.post(
     '/api/generate',
@@ -46,7 +46,7 @@ app.post(
     ],
     async (req, res) => {
         try {
-            // pino-http adds logging methods to req object
+            // Use req.log for request-specific logging
             req.log.info({
                 userId: req.body.userId,
                 version: req.body.version,
@@ -87,6 +87,7 @@ app.post(
             });
 
         } catch (error) {
+            // Use req.log for request-specific errors
             req.log.error({
                 err: error,
                 response: error.response?.data
@@ -102,5 +103,6 @@ app.post(
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
+    // Use logger directly for application-level logging
     logger.info(`Server is running on port ${PORT}`);
 });

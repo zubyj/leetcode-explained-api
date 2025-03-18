@@ -1,25 +1,53 @@
-const pinoHttp = require('pino-http');
+// utils/logger.js
+const pino = require('pino');
 
-const logger = pinoHttp({
-    logger: require('pino')({
-        level: process.env.LOG_LEVEL || 'info',
-        transport: {
+const isProduction = process.env.NODE_ENV === 'production';
+
+const logger = pino({
+    level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
+    timestamp: pino.stdTimeFunctions.isoTime,
+    formatters: {
+        level: (label) => ({ level: label }),
+    },
+    base: undefined, // Removes pid, hostname
+    transport: !isProduction
+        ? {
             target: 'pino-pretty',
             options: {
                 colorize: true,
-                translateTime: 'SYS:standard'
-            }
+                translateTime: 'SYS:standard',
+                ignore: 'pid,hostname',
+            },
         }
-    }),
-    // Customize automatic request logging
-    autoLogging: {
-        ignorePaths: ['/health']  // Add paths to ignore if needed
-    },
-    customLogLevel: function (res, err) {
-        if (res.statusCode >= 400 && res.statusCode < 500) return 'warn'
-        if (res.statusCode >= 500 || err) return 'error'
-        return 'info'
-    }
+        : undefined, // No prettifier in prod, logs JSON directly to stdout
 });
 
-module.exports = logger;
+const httpLogger = require('pino-http')({
+    logger,
+    genReqId: (req) => req.id || req.headers['x-request-id'] || pino.randomUUID(),
+    customLogLevel: (req, res, err) => {
+        if (res.statusCode >= 500 || err) return 'error';
+        else if (res.statusCode >= 400) return 'warn';
+        return 'info';
+    },
+    serializers: {
+        req: (req) => ({
+            id: req.id,
+            method: req.method,
+            url: req.url,
+            query: req.query,
+            headers: {
+                'user-agent': req.headers['user-agent'],
+                'content-length': req.headers['content-length'],
+                'x-request-id': req.headers['x-request-id'],
+            },
+            remoteAddress: req.remoteAddress,
+        }),
+        res: (res) => ({
+            statusCode: res.statusCode,
+            responseTime: res.responseTime,
+        }),
+    },
+});
+
+module.exports = { logger, httpLogger };
