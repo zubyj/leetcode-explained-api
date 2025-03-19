@@ -4,24 +4,57 @@ const crypto = require('crypto');
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-const logger = pino({
+// Create base logger configuration
+const loggerConfig = {
     level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
     timestamp: pino.stdTimeFunctions.isoTime,
     formatters: {
         level: (label) => ({ level: label }),
     },
     base: undefined, // Removes pid, hostname
-    transport: !isProduction
-        ? {
-            target: 'pino-pretty',
-            options: {
-                colorize: true,
-                translateTime: 'SYS:standard',
-                ignore: 'pid,hostname',
-            },
+};
+
+// Add pino-loki transport in production if LOKI_HOST is configured
+if (isProduction && process.env.LOKI_HOST) {
+    loggerConfig.transport = {
+        targets: [
+            {
+                target: 'pino-loki',
+                level: process.env.LOG_LEVEL || 'info',
+                options: {
+                    batching: true,
+                    interval: 5,
+                    labels: {
+                        app: process.env.APP_NAME || 'leetcode-explained-api',
+                        environment: process.env.NODE_ENV || 'production'
+                    },
+                    host: process.env.LOKI_HOST,
+                    basicAuth: process.env.LOKI_BASIC_AUTH ? {
+                        username: process.env.LOKI_USERNAME,
+                        password: process.env.LOKI_PASSWORD
+                    } : undefined
+                }
+            }
+        ]
+    };
+} else if (!isProduction) {
+    // Development transport with pino-pretty
+    loggerConfig.transport = {
+        target: 'pino-pretty',
+        options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
         }
-        : undefined, // No prettifier in prod, logs JSON directly to stdout
-});
+    };
+}
+
+const logger = pino(loggerConfig);
+
+// Add utility functions to logger
+logger.metrics = (metrics) => {
+    logger.info({ metrics }, 'Application metrics');
+};
 
 const httpLogger = require('pino-http')({
     logger,
@@ -43,6 +76,8 @@ const httpLogger = require('pino-http')({
                 'x-request-id': req.headers['x-request-id'],
             },
             remoteAddress: req.remoteAddress,
+            // Add business logic data if available
+            ...(req.businessData || {})
         }),
         res: (res) => ({
             statusCode: res.statusCode,
@@ -51,4 +86,21 @@ const httpLogger = require('pino-http')({
     },
 });
 
+// Add utility functions to req.log
+httpLogger.logger.metrics = (metrics) => {
+    httpLogger.logger.info({ metrics }, 'Request metrics');
+};
+
+// Replace apiRequest with a function that adds business data to the request
+httpLogger.logger.apiRequest = (data) => {
+    // Store business data in the request object
+    if (httpLogger.logger.req) {
+        httpLogger.logger.req.businessData = {
+            ...data,
+            timestamp: new Date().toISOString()
+        };
+    }
+};
+
 module.exports = { logger, httpLogger };
+

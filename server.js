@@ -12,6 +12,9 @@ dotenv.config();
 
 const app = express();
 
+// Trust proxy for rate limiter
+app.set('trust proxy', 1);
+
 // Basic middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -21,6 +24,22 @@ app.use(helmet({
     crossOriginResourcePolicy: false,
     crossOriginOpenerPolicy: false,
 }));
+
+// Rate limiter configuration
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+    keyGenerator: (req) => {
+        // Use X-Forwarded-For if available, otherwise use IP
+        return req.headers['x-forwarded-for'] || req.ip;
+    }
+});
+
+// Apply rate limiter to all routes
+app.use(limiter);
 
 // CORS configuration
 app.use(cors({
@@ -46,14 +65,15 @@ app.post(
     ],
     async (req, res) => {
         try {
-            // Use req.log for request-specific logging
-            req.log.info({
+            // Add business data to the request log
+            req.log.apiRequest({
                 userId: req.body.userId,
                 version: req.body.version,
                 problemTitle: req.body.problemTitle,
                 action: req.body.action,
-                model: req.body.model
-            }, 'Processing request');
+                model: req.body.model,
+                requestType: 'generation'
+            });
 
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
@@ -87,11 +107,16 @@ app.post(
             });
 
         } catch (error) {
-            // Use req.log for request-specific errors
+            // Log error with both HTTP and business context
             req.log.error({
                 err: error,
-                response: error.response?.data
-            }, 'Server error occurred');
+                response: error.response?.data,
+                request: {
+                    action: req.body.action,
+                    model: req.body.model,
+                    userId: req.body.userId
+                }
+            }, 'Error processing generation request');
 
             res.status(500).json({
                 error: 'Server error',
@@ -106,3 +131,4 @@ app.listen(PORT, () => {
     // Use logger directly for application-level logging
     logger.info(`Server is running on port ${PORT}`);
 });
+
