@@ -1,55 +1,106 @@
 // utils/logger.js
 const pino = require('pino');
 const crypto = require('crypto');
+const { hostname } = require('os');
+const { createLokiTransport } = require('./loki-direct');
+
+// Debug: Log environment variables
+console.log('Logger initialization:');
+console.log('LOKI_HOST:', process.env.LOKI_HOST);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('DISABLE_LOKI:', process.env.DISABLE_LOKI);
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Create base logger configuration
-const loggerConfig = {
+// Create base logger configuration without custom formatters when using transport
+const baseConfig = {
     level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
     timestamp: pino.stdTimeFunctions.isoTime,
-    formatters: {
-        level: (label) => ({ level: label }),
-    },
     base: undefined, // Removes pid, hostname
 };
 
-// Add pino-loki transport in production if LOKI_HOST is configured
-if (isProduction && process.env.LOKI_HOST) {
-    loggerConfig.transport = {
-        targets: [
-            {
-                target: 'pino-loki',
-                level: process.env.LOG_LEVEL || 'info',
-                options: {
-                    batching: true,
-                    interval: 5,
+let logger;
+
+// Configure transports based on environment
+if (process.env.DISABLE_LOKI !== 'true') {
+    // Ensure we have required environment variables
+    if (!process.env.LOKI_HOST) {
+        console.warn('LOKI_HOST environment variable is not set. Disabling Loki logging.');
+        process.env.DISABLE_LOKI = 'true';
+    } else {
+        try {
+            console.log('Creating logger with custom Loki transport');
+            
+            // Create a multi destination stream
+            const multiStream = require('pino-multi-stream').multistream;
+            const streams = [];
+            
+            // Add pretty print in dev mode
+            if (!isProduction) {
+                streams.push({
+                    stream: pino.transport({
+                        target: 'pino-pretty',
+                        options: {
+                            colorize: true,
+                            translateTime: 'SYS:standard',
+                            ignore: 'pid,hostname',
+                        }
+                    })
+                });
+            }
+            
+            // Add our custom Loki transport
+            streams.push({
+                stream: createLokiTransport({
+                    host: process.env.LOKI_HOST,
+                    username: process.env.LOKI_USERNAME,
+                    password: process.env.LOKI_PASSWORD,
                     labels: {
                         app: process.env.APP_NAME || 'leetcode-explained-api',
-                        environment: process.env.NODE_ENV || 'production'
+                        environment: process.env.NODE_ENV || 'development',
+                        host: hostname()
                     },
-                    host: process.env.LOKI_HOST,
-                    basicAuth: process.env.LOKI_BASIC_AUTH ? {
-                        username: process.env.LOKI_USERNAME,
-                        password: process.env.LOKI_PASSWORD
-                    } : undefined
-                }
-            }
-        ]
-    };
-} else if (!isProduction) {
-    // Development transport with pino-pretty
-    loggerConfig.transport = {
-        target: 'pino-pretty',
-        options: {
-            colorize: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname',
+                    batchSize: 10,
+                    interval: 5000 // 5 seconds
+                })
+            });
+            
+            // Create the logger with multiple destinations
+            logger = pino(baseConfig, multiStream(streams));
+            console.log('Custom Loki logger configured successfully');
+            
+        } catch (error) {
+            console.error('Error configuring custom Loki logger:', error.message);
+            process.env.DISABLE_LOKI = 'true';
         }
-    };
+    }
 }
 
-const logger = pino(loggerConfig);
+// Fallback if Loki is disabled or not properly configured
+if (!logger) {
+    console.log('Using fallback logger (without Loki)');
+    // When no transport is used, we can use formatters
+    baseConfig.formatters = {
+        level: (label) => ({ level: label }),
+    };
+    
+    if (!isProduction) {
+        // Development transport with pino-pretty only
+        logger = pino({
+            ...baseConfig,
+            transport: {
+                target: 'pino-pretty',
+                options: {
+                    colorize: true,
+                    translateTime: 'SYS:standard',
+                    ignore: 'pid,hostname',
+                }
+            }
+        });
+    } else {
+        logger = pino(baseConfig);
+    }
+}
 
 // Add utility functions to logger
 logger.metrics = (metrics) => {

@@ -1,14 +1,13 @@
+// Load environment variables first
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
-const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const axios = require('axios');
 const { logger, httpLogger } = require('./utils/logger');
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 
