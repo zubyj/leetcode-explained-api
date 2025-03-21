@@ -55,6 +55,15 @@ app.options('/api/generate', cors());
 // Add pino-http middleware
 app.use(httpLogger);
 
+// Log server start with environment info
+logger.info({
+    msg: 'Server starting',
+    loki_host: process.env.LOKI_HOST ? 'configured' : 'not configured',
+    disable_loki: process.env.DISABLE_LOKI,
+    debug_logging: process.env.DEBUG_LOGGING,
+    app_name: process.env.APP_NAME
+});
+
 app.post(
     '/api/generate',
     [
@@ -64,27 +73,27 @@ app.post(
     ],
     async (req, res) => {
         try {
-            // Add request start time
-            req.startTime = Date.now();
-            
-            // Store business data for later logging
+            // Add business data to the request log
             const businessData = {
-                userId: req.body.userId,
-                version: req.body.version,
-                problemTitle: req.body.problemTitle,
-                action: req.body.action,
-                model: req.body.model,
+                userId: req.body.userId || 'anonymous',
+                version: req.body.version || '',
+                problemTitle: req.body.problemTitle || '',
+                action: req.body.action || 'unknown',
+                model: req.body.model || 'default',
                 requestType: 'generation'
             };
             
-            // Store business data in request for potential error handlers
-            req.businessData = businessData;
+            // Log full business data
+            req.log.apiRequest(businessData);
             
-            // Skip intermediate logging to reduce log volume
-            
+            // Debug log for troubleshooting
+            if (process.env.DEBUG_LOGGING === 'true') {
+                console.log('Business data:', businessData);
+            }
+
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
-                req.log.warn({ errors: errors.array(), ...businessData }, 'Validation failed');
+                req.log.warn({ errors: errors.array() }, 'Validation failed');
                 return res.status(400).json({ errors: errors.array() });
             }
 
@@ -113,15 +122,28 @@ app.post(
                 action: action
             };
             
-            // The response logging will be handled automatically by the httpLogger middleware
+            // Log successful response
+            req.log.info({
+                msg: 'API request completed',
+                responseType: 'answer',
+                action: action,
+                model: model,
+                ...businessData
+            });
+            
             return res.json(responseData);
 
         } catch (error) {
-            // Log the error - the httpLogger will add a standard log on res.finish
+            // Detailed error logging
             req.log.error({
+                msg: 'Error processing request',
                 error: error.message,
-                stack: error.stack
-            }, 'Error processing request');
+                stack: error.stack,
+                response: error.response?.data,
+                userId: req.body.userId || 'anonymous',
+                action: req.body.action || 'unknown',
+                model: req.body.model || 'default'
+            });
 
             res.status(500).json({
                 error: 'Server error',
@@ -134,6 +156,6 @@ app.post(
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     // Use logger directly for application-level logging
-    logger.info(`Server is running on port ${PORT}`);
+    logger.info({ msg: `Server running on port ${PORT}`, port: PORT });
 });
 
