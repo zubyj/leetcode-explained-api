@@ -64,19 +64,27 @@ app.post(
     ],
     async (req, res) => {
         try {
-            // Add business data to the request log
-            req.log.apiRequest({
+            // Add request start time
+            req.startTime = Date.now();
+            
+            // Store business data for later logging
+            const businessData = {
                 userId: req.body.userId,
                 version: req.body.version,
                 problemTitle: req.body.problemTitle,
                 action: req.body.action,
                 model: req.body.model,
                 requestType: 'generation'
-            });
-
+            };
+            
+            // Store business data in request for potential error handlers
+            req.businessData = businessData;
+            
+            // Skip intermediate logging to reduce log volume
+            
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
-                req.log.warn({ errors: errors.array() }, 'Validation failed');
+                req.log.warn({ errors: errors.array(), ...businessData }, 'Validation failed');
                 return res.status(400).json({ errors: errors.array() });
             }
 
@@ -99,23 +107,21 @@ app.post(
                 }
             });
 
-            return res.json({
+            const responseData = {
                 type: 'answer',
                 data: { text: openRouterResponse.data.choices[0].message.content },
                 action: action
-            });
+            };
+            
+            // The response logging will be handled automatically by the httpLogger middleware
+            return res.json(responseData);
 
         } catch (error) {
-            // Log error with both HTTP and business context
+            // Log the error - the httpLogger will add a standard log on res.finish
             req.log.error({
-                err: error,
-                response: error.response?.data,
-                request: {
-                    action: req.body.action,
-                    model: req.body.model,
-                    userId: req.body.userId
-                }
-            }, 'Error processing generation request');
+                error: error.message,
+                stack: error.stack
+            }, 'Error processing request');
 
             res.status(500).json({
                 error: 'Server error',
