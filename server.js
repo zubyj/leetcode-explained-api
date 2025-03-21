@@ -83,12 +83,12 @@ app.post(
                 requestType: 'generation'
             };
             
-            // Log full business data
+            // Log business data with request
             req.log.apiRequest(businessData);
             
             // Debug log for troubleshooting
             if (process.env.DEBUG_LOGGING === 'true') {
-                console.log('Business data:', businessData);
+                console.log('Business data in handler:', businessData);
             }
 
             const errors = validationResult(req);
@@ -122,13 +122,11 @@ app.post(
                 action: action
             };
             
-            // Log successful response
-            req.log.info({
-                msg: 'API request completed',
+            // Add response context to the logger
+            req.log.addResponseContext({
                 responseType: 'answer',
                 action: action,
-                model: model,
-                ...businessData
+                model: model
             });
             
             return res.json(responseData);
@@ -139,10 +137,7 @@ app.post(
                 msg: 'Error processing request',
                 error: error.message,
                 stack: error.stack,
-                response: error.response?.data,
-                userId: req.body.userId || 'anonymous',
-                action: req.body.action || 'unknown',
-                model: req.body.model || 'default'
+                response: error.response?.data
             });
 
             res.status(500).json({

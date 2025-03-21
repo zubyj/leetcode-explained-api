@@ -55,46 +55,82 @@ if (process.env.DEBUG_LOGGING === 'true') {
   console.log('Logger created with Loki configuration');
 }
 
-// Create HTTP logger middleware
-const httpLogger = pinoHttp({
-  logger,
-  genReqId: (req) => req.headers['x-request-id'] || crypto.randomUUID(),
-  customLogLevel: (req, res, err) => {
-    if (res.statusCode >= 500 || err) return 'error';
-    else if (res.statusCode >= 400) return 'warn';
-    return 'info';
-  },
-  serializers: {
-    req: (req) => ({
-      id: req.id,
-      method: req.method,
-      url: req.url,
-      ...(req.businessData || {}),
-      headers: {
-        'user-agent': req.headers['user-agent'],
-        'content-length': req.headers['content-length'],
-        'x-request-id': req.headers['x-request-id']
-      },
-      remoteAddress: req.ip || req.remoteAddress
-    })
-  }
-});
-
-// Add helper method to attach business data
-httpLogger.logger.apiRequest = function(data) {
-  if (this.req) {
-    this.req.businessData = {
+// Create a simpler HTTP logger
+const httpLogger = (req, res, next) => {
+  // Generate a request ID
+  const reqId = req.headers['x-request-id'] || crypto.randomUUID();
+  req.id = reqId;
+  
+  // Create a logger specific to this request
+  req.log = logger.child({ reqId });
+  
+  // Store business data as a property on the request object
+  req.businessData = {};
+  
+  // Add helper method to attach business data
+  req.log.apiRequest = function(data) {
+    // Store directly on req
+    req.businessData = {
       ...data,
       timestamp: new Date().toISOString()
     };
     
-    // Log an explicit message with business data
-    logger.info({
+    if (process.env.DEBUG_LOGGING === 'true') {
+      console.log(`Stored business data for request ${reqId}:`, req.businessData);
+    }
+  };
+  
+  // Store response data
+  req.responseData = {};
+  
+  // Add helper method to attach response context
+  req.log.addResponseContext = function(data) {
+    req.responseData = {
       ...data,
-      msg: 'API request received',
-      reqId: this.req.id
+      status: 'success'
+    };
+    
+    if (process.env.DEBUG_LOGGING === 'true') {
+      console.log(`Stored response data for request ${reqId}:`, req.responseData);
+    }
+  };
+  
+  // Capture end of request
+  const originalEnd = res.end;
+  res.end = function(...args) {
+    // Call the original end method
+    originalEnd.apply(res, args);
+    
+    // Log the complete request with all data
+    logger.info({
+      req: {
+        id: reqId,
+        method: req.method,
+        url: req.url,
+        // Include all business data fields
+        ...req.businessData,
+        // Only include essential headers
+        headers: {
+          'user-agent': req.headers['user-agent'],
+          'x-request-id': req.headers['x-request-id']
+        },
+        remoteAddress: req.ip || req.socket.remoteAddress
+      },
+      res: {
+        statusCode: res.statusCode,
+        // Include response data
+        ...req.responseData
+      },
+      responseTime: Date.now() - req._startTime,
+      msg: 'request completed'
     });
-  }
+  };
+  
+  // Start time tracking
+  req._startTime = Date.now();
+  
+  // Continue to the next middleware
+  next();
 };
 
 logger.info('Logger initialized and ready');
