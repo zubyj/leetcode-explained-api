@@ -55,6 +55,16 @@ app.options('/api/generate', cors());
 // Add pino-http middleware
 app.use(httpLogger);
 
+// Middleware to check for unique token
+app.use((req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (authHeader === 'leetSauce420') {
+        next(); // Token is valid, proceed to the next middleware/route handler
+    } else {
+        res.status(403).json({ error: 'Forbidden: Invalid token' }); // Token is invalid
+    }
+});
+
 // Log server start with environment info
 logger.info({
     msg: 'Server starting',
