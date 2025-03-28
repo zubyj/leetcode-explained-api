@@ -50,7 +50,9 @@ app.use((err, req, res, next) => {
     });
 
     res.status(500).json({
-        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+        status: 'error',
+        code: 'UNHANDLED_ERROR',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
     });
 });
 
@@ -112,12 +114,20 @@ app.use((req, res, next) => {
     const expectedToken = process.env.AUTH_TOKEN;
     if (!expectedToken) {
         logger.error('AUTH_TOKEN not configured in environment variables');
-        return res.status(500).json({ error: 'Server configuration error' });
+        return res.status(500).json({
+            status: 'error',
+            code: 'SERVER_CONFIG_ERROR',
+            message: 'Server configuration error'
+        });
     }
 
     const authHeader = req.headers['authorization'];
     if (!authHeader) {
-        return res.status(401).json({ error: 'No authorization token provided' });
+        return res.status(401).json({
+            status: 'error',
+            code: 'AUTH_TOKEN_MISSING',
+            message: 'No authorization token provided'
+        });
     }
 
     // Handle 'Bearer' prefix and trim whitespace
@@ -130,7 +140,11 @@ app.use((req, res, next) => {
             ip: req.ip,
             path: req.path
         });
-        return res.status(403).json({ error: 'Invalid authorization token' });
+        return res.status(403).json({
+            status: 'error',
+            code: 'AUTH_TOKEN_INVALID',
+            message: 'Invalid authorization token'
+        });
     }
 
     next();
@@ -175,7 +189,12 @@ app.post(
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
                 req.log.warn({ errors: errors.array() }, 'Validation failed');
-                return res.status(400).json({ errors: errors.array() });
+                return res.status(400).json({
+                    status: 'error',
+                    code: 'VALIDATION_ERROR',
+                    message: 'Request validation failed',
+                    errors: errors.array()
+                });
             }
 
             const { prompt, model = 'amazon/nova-micro-v1', action } = req.body;
@@ -221,10 +240,30 @@ app.post(
                 response: error.response?.data
             });
 
-            res.status(500).json({
-                error: 'Server error',
-                message: error.response?.data?.error || error.message
-            });
+            // Handle different types of errors
+            if (error.response) {
+                // OpenRouter API error
+                return res.status(error.response.status || 500).json({
+                    status: 'error',
+                    code: 'API_ERROR',
+                    message: error.response.data?.error || 'Error calling OpenRouter API',
+                    details: process.env.NODE_ENV === 'development' ? error.response.data : undefined
+                });
+            } else if (error.request) {
+                // Network error
+                return res.status(503).json({
+                    status: 'error',
+                    code: 'NETWORK_ERROR',
+                    message: 'Network error while calling OpenRouter API'
+                });
+            } else {
+                // Other errors
+                return res.status(500).json({
+                    status: 'error',
+                    code: 'SERVER_ERROR',
+                    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+                });
+            }
         }
     }
 );
