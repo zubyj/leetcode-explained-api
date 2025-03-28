@@ -18,32 +18,81 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
 // Basic middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Security middleware
 app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", "data:", "https:"],
+            connectSrc: ["'self'", "https://openrouter.ai"],
+        },
+    },
     crossOriginResourcePolicy: false,
     crossOriginOpenerPolicy: false,
+    hsts: {
+        maxAge: 31536000, // 1 year
+        includeSubDomains: true,
+        preload: true
+    }
 }));
 
-// Rate limiter configuration
-const limiter = rateLimit({
+// Global error handler
+app.use((err, req, res, next) => {
+    req.log.error({
+        msg: 'Unhandled error',
+        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+        stack: process.env.NODE_ENV === 'production' ? undefined : err.stack
+    });
+
+    res.status(500).json({
+        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+    });
+});
+
+// IP blacklist middleware
+const blacklistedIPs = new Set();
+app.use((req, res, next) => {
+    const clientIP = req.headers['x-forwarded-for'] || req.ip;
+    if (blacklistedIPs.has(clientIP)) {
+        return res.status(403).json({ error: 'Access denied' });
+    }
+    next();
+});
+
+// Enhanced rate limiter configuration
+const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // Limit each IP to 100 requests per windowMs
     message: 'Too many requests from this IP, please try again later.',
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    keyGenerator: (req) => {
-        // Use X-Forwarded-For if available, otherwise use IP
-        return req.headers['x-forwarded-for'] || req.ip;
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
+    handler: (req, res) => {
+        const clientIP = req.headers['x-forwarded-for'] || req.ip;
+        if (req.rateLimit.remaining === 0) {
+            // If client has exhausted their rate limit multiple times, blacklist them
+            const strikes = (req.rateLimit.strikes || 0) + 1;
+            if (strikes >= 3) {
+                blacklistedIPs.add(clientIP);
+            }
+            req.rateLimit.strikes = strikes;
+        }
+        res.status(429).json({
+            error: 'Too many requests',
+            retryAfter: Math.ceil(req.rateLimit.resetTime / 1000)
+        });
     }
 });
 
-// Apply rate limiter to all routes
-app.use(limiter);
+// Apply rate limiter to API routes
+app.use('/api/', apiLimiter);
 
-// CORS configuration
+// CORS configuration - strict configuration for Chrome extension
 app.use(cors({
     origin: 'chrome-extension://hkbmmebmjcgpkfmlpjhghcpbokomngga',
     methods: ['POST', 'OPTIONS'],
@@ -58,16 +107,33 @@ app.options('/api/generate', cors());
 // Add pino-http middleware
 app.use(httpLogger);
 
-// Middleware to check for unique token
+// Token authentication middleware
 app.use((req, res, next) => {
-    // Compare using environment variable, fallback if not defined
-    const expectedToken = process.env.AUTH_TOKEN || 'leetSauce420';
-    const authHeader = req.headers['authorization'];
-    if (authHeader === expectedToken) {
-        next(); // Token is valid, proceed
-    } else {
-        res.status(403).json({ error: 'Forbidden: Invalid token' });
+    const expectedToken = process.env.AUTH_TOKEN;
+    if (!expectedToken) {
+        logger.error('AUTH_TOKEN not configured in environment variables');
+        return res.status(500).json({ error: 'Server configuration error' });
     }
+
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) {
+        return res.status(401).json({ error: 'No authorization token provided' });
+    }
+
+    // Handle 'Bearer' prefix and trim whitespace
+    const token = authHeader.replace('Bearer', '').trim();
+    
+    if (token !== expectedToken) {
+        // Log invalid token attempts but don't expose which part was wrong
+        logger.warn({
+            msg: 'Invalid token attempt',
+            ip: req.ip,
+            path: req.path
+        });
+        return res.status(403).json({ error: 'Invalid authorization token' });
+    }
+
+    next();
 });
 
 // Log server start with environment info
@@ -164,8 +230,46 @@ app.post(
 );
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    // Use logger directly for application-level logging
+const server = app.listen(PORT, () => {
     logger.info({ msg: `Server running on port ${PORT}`, port: PORT });
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM received. Starting graceful shutdown...');
+    server.close(() => {
+        logger.info('Server closed. Process terminating...');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT received. Starting graceful shutdown...');
+    server.close(() => {
+        logger.info('Server closed. Process terminating...');
+        process.exit(0);
+    });
+});
+
+// Uncaught exception handler
+process.on('uncaughtException', (error) => {
+    logger.fatal({
+        msg: 'Uncaught exception',
+        error: error.message,
+        stack: error.stack
+    });
+    // Give the logger time to flush
+    setTimeout(() => {
+        process.exit(1);
+    }, 1000);
+});
+
+// Unhandled rejection handler
+process.on('unhandledRejection', (reason, promise) => {
+    logger.fatal({
+        msg: 'Unhandled rejection',
+        reason: reason,
+        promise: promise
+    });
 });
 
