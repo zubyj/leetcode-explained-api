@@ -11,6 +11,9 @@ const { logger, httpLogger } = require('./utils/logger');
 
 const app = express();
 
+// Disable the X-Powered-By header for security
+app.disable('x-powered-by');
+
 // Trust proxy for rate limiter
 app.set('trust proxy', 1);
 
@@ -57,11 +60,13 @@ app.use(httpLogger);
 
 // Middleware to check for unique token
 app.use((req, res, next) => {
+    // Compare using environment variable, fallback if not defined
+    const expectedToken = process.env.AUTH_TOKEN || 'leetSauce420';
     const authHeader = req.headers['authorization'];
-    if (authHeader === 'leetSauce420') {
-        next(); // Token is valid, proceed to the next middleware/route handler
+    if (authHeader === expectedToken) {
+        next(); // Token is valid, proceed
     } else {
-        res.status(403).json({ error: 'Forbidden: Invalid token' }); // Token is invalid
+        res.status(403).json({ error: 'Forbidden: Invalid token' });
     }
 });
 
@@ -92,10 +97,10 @@ app.post(
                 model: req.body.model || 'default',
                 requestType: 'generation'
             };
-            
+
             // Log business data with request
             req.log.apiRequest(businessData);
-            
+
             // Debug log for troubleshooting
             if (process.env.DEBUG_LOGGING === 'true') {
                 console.log('Business data in handler:', businessData);
@@ -131,14 +136,14 @@ app.post(
                 data: { text: openRouterResponse.data.choices[0].message.content },
                 action: action
             };
-            
+
             // Add response context to the logger
             req.log.addResponseContext({
                 responseType: 'answer',
                 action: action,
                 model: model
             });
-            
+
             return res.json(responseData);
 
         } catch (error) {
