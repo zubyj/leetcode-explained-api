@@ -162,18 +162,36 @@ logger.info({
 app.post(
     '/api/generate',
     [
-        body('prompt').isString().notEmpty().withMessage('Prompt is required'),
-        body('model').optional().isString(),
-        body('action').isIn(['analyze', 'fix']).withMessage('Valid action is required'),
+        body('prompt').isString().notEmpty().withMessage('Prompt is required and must be a string'),
+        body('model').optional().isString().withMessage('Model must be a string if provided'),
+        body('action').isString().isIn(['analyze', 'fix']).withMessage('Action must be either "analyze" or "fix"'),
+        body('userId').optional().isString().withMessage('UserId must be a string if provided'),
+        body('version').optional().isString().withMessage('Version must be a string if provided'),
+        body('problemTitle').optional().isString().withMessage('ProblemTitle must be a string if provided')
     ],
     async (req, res) => {
         try {
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                req.log.warn({ errors: errors.array() }, 'Validation failed');
+                
+                // Get the first error message for a cleaner response
+                const firstError = errors.array()[0];
+                return res.status(400).json({
+                    status: 'error',
+                    code: 'VALIDATION_ERROR',
+                    message: firstError.msg,
+                    field: firstError.path,
+                    errors: errors.array()
+                });
+            }
+
             // Add business data to the request log
             const businessData = {
                 userId: req.body.userId || 'anonymous',
                 version: req.body.version || '',
                 problemTitle: req.body.problemTitle || '',
-                action: req.body.action || 'unknown',
+                action: req.body.action,
                 model: req.body.model || 'default',
                 requestType: 'generation'
             };
@@ -183,18 +201,8 @@ app.post(
 
             // Debug log for troubleshooting
             if (process.env.DEBUG_LOGGING === 'true') {
+                console.log('Request body:', req.body);
                 console.log('Business data in handler:', businessData);
-            }
-
-            const errors = validationResult(req);
-            if (!errors.isEmpty()) {
-                req.log.warn({ errors: errors.array() }, 'Validation failed');
-                return res.status(400).json({
-                    status: 'error',
-                    code: 'VALIDATION_ERROR',
-                    message: 'Request validation failed',
-                    errors: errors.array()
-                });
             }
 
             const { prompt, model = 'amazon/nova-micro-v1', action } = req.body;
