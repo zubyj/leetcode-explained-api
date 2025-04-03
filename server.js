@@ -175,14 +175,14 @@ app.post(
             if (!errors.isEmpty()) {
                 req.log.warn({ errors: errors.array() }, 'Validation failed');
                 
-                // Get the first error message for a cleaner response
-                const firstError = errors.array()[0];
                 return res.status(400).json({
                     status: 'error',
                     code: 'VALIDATION_ERROR',
-                    message: firstError.msg,
-                    field: firstError.path,
-                    errors: errors.array()
+                    message: 'Request validation failed',
+                    errors: errors.array().map(err => ({
+                        field: err.path,
+                        message: err.msg
+                    }))
                 });
             }
 

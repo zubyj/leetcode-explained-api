@@ -101,29 +101,50 @@ const httpLogger = (req, res, next) => {
     // Call the original end method
     originalEnd.apply(res, args);
     
-    // Log the complete request with all data
-    logger.info({
-      req: {
-        id: reqId,
-        method: req.method,
-        url: req.url,
-        // Include all business data fields
-        ...req.businessData,
-        // Only include essential headers
-        headers: {
-          'user-agent': req.headers['user-agent'],
-          'x-request-id': req.headers['x-request-id']
+    // Check if this is a request from our Chrome extension
+    const isExtensionRequest = () => {
+      // Check for required fields that only our extension sends
+      const hasRequiredFields = req.businessData && 
+        req.businessData.userId && 
+        req.businessData.version && 
+        req.businessData.problemTitle &&
+        req.businessData.action;
+
+      // Check if it's a POST request to our API endpoint
+      const isApiRequest = req.method === 'POST' && req.url === '/api/generate';
+
+      // Check user agent (optional, but can be used as additional verification)
+      const userAgent = req.headers['user-agent']?.toLowerCase() || '';
+      const isChromeBrowser = userAgent.includes('chrome');
+
+      return hasRequiredFields && isApiRequest && isChromeBrowser;
+    };
+    
+    // Only log if it's a request from our extension
+    if (isExtensionRequest()) {
+      logger.info({
+        req: {
+          id: reqId,
+          method: req.method,
+          url: req.url,
+          // Include all business data fields
+          ...req.businessData,
+          // Only include essential headers
+          headers: {
+            'user-agent': req.headers['user-agent'],
+            'x-request-id': req.headers['x-request-id']
+          },
+          remoteAddress: req.ip || req.socket.remoteAddress
         },
-        remoteAddress: req.ip || req.socket.remoteAddress
-      },
-      res: {
-        statusCode: res.statusCode,
-        // Include response data
-        ...req.responseData
-      },
-      responseTime: Date.now() - req._startTime,
-      msg: 'request completed'
-    });
+        res: {
+          statusCode: res.statusCode,
+          // Include response data
+          ...req.responseData
+        },
+        responseTime: Date.now() - req._startTime,
+        msg: 'request completed'
+      });
+    }
   };
   
   // Start time tracking
