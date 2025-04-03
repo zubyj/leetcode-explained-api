@@ -162,7 +162,7 @@ logger.info({
 app.post(
     '/api/generate',
     [
-        body('prompt').isString().notEmpty().withMessage('Prompt is required and must be a string'),
+        body('prompt').notEmpty().withMessage('Prompt is required'),
         body('model').optional().isString().withMessage('Model must be a string if provided'),
         body('action').isString().isIn(['analyze', 'fix']).withMessage('Action must be either "analyze" or "fix"'),
         body('userId').optional().isString().withMessage('UserId must be a string if provided'),
